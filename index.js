@@ -1,12 +1,18 @@
-const dotenv = require("dotenv")
-const {
+import { Redis } from "@upstash/redis"
+import dotenv from "dotenv"
+import {
   Client,
   Events,
   GatewayIntentBits,
   PermissionsBitField,
-} = require("discord.js")
+} from "discord.js"
 
 dotenv.config()
+
+const redis = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+})
 
 // Create a new client instance
 const client = new Client({
@@ -19,12 +25,52 @@ const client = new Client({
   ],
 })
 
-let ticketCounter = 1 // Counter for ticket channels
-const targetGuildId = "842787726633992212" // Replace with your guild ID
-const targetChannelId = "1323152325832998924" // Replace with your channel ID
-const ticketCategoryId = "842787726633992213" // Replace with your category ID
+const targetGuildId = process.env.SERVER_ID
+const targetChannelId = process.env.CHANNEL_ID
+const ticketCategoryId = process.env.CATEGORY_ID
+const adminChannelId = process.env.ADMIN_CHANNEL_ID
 
-client.once(Events.ClientReady, readyClient => {
+// Redis Helper Functions
+async function redisSet(key, value) {
+  return redis.set(key, JSON.stringify(value))
+}
+
+async function redisGet(key) {
+  console.log("key", key)
+  const value = await redis.get(key)
+  console.log("value", value)
+
+  if (typeof value === "string") {
+    try {
+      const parsedValue = JSON.parse(value)
+      console.log("parsedValue", parsedValue)
+      return parsedValue
+    } catch (error) {
+      console.error("Failed to parse value as JSON:", value, error.message)
+      return null
+    }
+  }
+
+  console.log("Returning raw value (non-string)", value)
+  return value
+}
+
+async function redisDelete(key) {
+  await redis.del(key)
+}
+
+async function getTicketCounter() {
+  const counter = await redisGet("ticketCounter")
+  return counter !== null ? counter : 1
+}
+
+async function incrementTicketCounter() {
+  const counter = await getTicketCounter()
+  await redisSet("ticketCounter", counter + 1)
+  return counter
+}
+
+client.once(Events.ClientReady, async readyClient => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`)
 })
 
@@ -47,34 +93,52 @@ client.on(Events.MessageCreate, async message => {
       try {
         const guild = await client.guilds.fetch(targetGuildId)
 
-        // Fetch the member dynamically
-        let member
-        try {
-          member = await guild.members.fetch(discordID)
-        } catch {
-          // Fallback to find by username or tag
-          const members = await guild.members.fetch()
-          member = members.find(
-            m =>
-              m.user.username === discordID ||
-              m.user.tag === discordID ||
-              m.user.globalName === discordID
-          )
+        // Check if the user already has a ticket channel
+
+        let existingChannel = await redisGet(discordID)
+
+        if (existingChannel) {
+          const ticketChannel = await guild.channels
+            .fetch(existingChannel.channelId)
+            .catch(() => null) // Handle deleted channels
+
+          if (ticketChannel) {
+            // If channel exists, send the query to it
+            await ticketChannel.send(
+              `New message from <@${existingChannel.userId}>:\n\n**Query:** ${query}`
+            )
+            console.log(
+              `Message sent to existing channel: ${ticketChannel.name}`
+            )
+            return
+          } else {
+            // If the channel was deleted, remove it from Redis
+            console.log(`Channel for ${discordID} no longer exists.`)
+            await redisDelete(discordID)
+          }
         }
+
+        // If no channel exists, create a new one
+        const members = await guild.members.fetch()
+        const member = members.find(
+          m =>
+            m.user.username === discordID ||
+            m.user.tag === discordID ||
+            m.user.globalName === discordID
+        )
 
         if (!member) {
           console.log(`User with ID ${discordID} not found in the guild.`)
           return
         }
 
-        // Create a new ticket channel under the specified category
-        const channelName = `ticket-${ticketCounter}`
-        ticketCounter++
+        // Increment the ticket counter
+        const ticketCounter = await incrementTicketCounter()
 
         const ticketChannel = await guild.channels.create({
-          name: channelName,
+          name: `ticket-${ticketCounter}`,
           type: 0, // Text channel
-          parent: ticketCategoryId, // Set the category for the channel
+          parent: ticketCategoryId,
           permissionOverwrites: [
             {
               id: guild.roles.everyone.id, // Deny access for everyone
@@ -98,13 +162,29 @@ client.on(Events.MessageCreate, async message => {
           ],
         })
 
-        // Post the query in the new channel
+        // Store the information in Redis
+        await redis.set(discordID, {
+          channelId: ticketChannel.id,
+          userId: member.user.id,
+        })
+
+        // Send the query to the newly created channel
         await ticketChannel.send(
           `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}`
         )
         console.log(`Created channel: ${ticketChannel.name}`)
       } catch (error) {
-        console.error(`Failed to create ticket channel: ${error.message}`)
+        console.error(`Failed to handle message: ${error.message}`)
+
+        const adminChannel = await message.guild.channels
+          .fetch(adminChannelId)
+          .catch(() => null)
+
+        if (adminChannel) {
+          await adminChannel.send(
+            `⚠️ An error occurred while processing a ticket:\n**Error:** ${error.message}`
+          )
+        }
       }
     }
   }

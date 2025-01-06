@@ -3,12 +3,14 @@
   "version": "1.0.0",
   "description": "a bot that creates tickets dynamically",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Muhammad Umer",
   "license": "ISC",
   "dependencies": {
+    "@upstash/redis": "^1.34.3",
     "discord.js": "^14.17.2",
     "dotenv": "^16.4.7"
   }
