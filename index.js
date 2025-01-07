@@ -31,8 +31,8 @@ const client = new Client({
 const targetGuildId = process.env.SERVER_ID
 const targetChannelId = process.env.CHANNEL_ID
 const ticketCategoryId = process.env.CATEGORY_ID
-const adminChannelId = process.env.ADMIN_CHANNEL_ID
-const adminID = process.env.ADMIN_ID
+const ERROR_CHANNEL_ID = process.env.ERROR_CHANNEL_ID
+const supportID = process.env.SUPPORT_ID
 
 // Redis Helper Functions
 async function redisSet(key, value) {
@@ -94,6 +94,7 @@ client.on(Events.MessageCreate, async message => {
       const discordID = match[1]
       const query = match[2]
       const attachments = message.attachments
+      console.log("message.attachments", message.attachments)
 
       try {
         const guild = await client.guilds.fetch(targetGuildId)
@@ -110,10 +111,11 @@ client.on(Events.MessageCreate, async message => {
           if (ticketChannel) {
             // If channel exists, send the query and attachments to it
             const msg = await ticketChannel.send({
-              content: `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${adminID}>`,
+              content: `Hello <@${existingChannel.userId}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${supportID}>`,
             })
             if (attachments.size > 0) {
               for (const attachment of attachments.values()) {
+                console.log("attachment.url", attachment.url)
                 await ticketChannel.send({
                   files: [attachment.url],
                 })
@@ -142,7 +144,7 @@ client.on(Events.MessageCreate, async message => {
         if (!member) {
           console.log(`User with ID ${discordID} not found in the guild.`)
           const adminChannel = await message.guild.channels
-            .fetch(adminChannelId)
+            .fetch(ERROR_CHANNEL_ID)
             .catch(() => null)
 
           if (adminChannel) {
@@ -184,14 +186,16 @@ client.on(Events.MessageCreate, async message => {
         })
 
         // Store the information in Redis
-        await redis.set(discordID, {
+        console.log("before")
+        const data = await redis.set(discordID, {
           channelId: ticketChannel.id,
           userId: member.user.id,
         })
-
+        console.log("redis data :", data)
+        console.log("after")
         // Send the query to the newly created channel
         const msg = await ticketChannel.send({
-          content: `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${adminID}>`,
+          content: `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${supportID}>`,
           components: [
             new ActionRowBuilder().addComponents(
               new ButtonBuilder()
@@ -201,17 +205,26 @@ client.on(Events.MessageCreate, async message => {
             ),
           ],
         })
+        if (attachments.size > 0) {
+          for (const attachment of attachments.values()) {
+            console.log("attachment.url", attachment.url)
+            await ticketChannel.send({
+              files: [attachment.url],
+            })
+          }
+        }
+        console.log("message send")
         console.log(`Created channel: ${ticketChannel.name}`)
       } catch (error) {
         console.error(`Failed to handle message: ${error.message}`)
 
         const adminChannel = await message.guild.channels
-          .fetch(adminChannelId)
+          .fetch(ERROR_CHANNEL_ID)
           .catch(() => null)
 
         if (adminChannel) {
           await adminChannel.send(
-            `⚠️ <@${adminID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
+            `⚠️  An error occurred while processing a ticket:\n**Error:** ${error.message}`
           )
         }
       }
@@ -237,12 +250,12 @@ client.on(Events.InteractionCreate, async interaction => {
       console.error(`Failed to handle message: ${error.message}`)
 
       const adminChannel = await interaction.guild.channels
-        .fetch(adminChannelId)
+        .fetch(ERROR_CHANNEL_ID)
         .catch(() => null)
 
       if (adminChannel) {
         await adminChannel.send(
-          `⚠️ <@${adminID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
+          `⚠️  An error occurred while processing a ticket:\n**Error:** ${error.message}`
         )
       }
     }
