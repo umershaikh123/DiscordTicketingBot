@@ -5,6 +5,9 @@ import {
   Events,
   GatewayIntentBits,
   PermissionsBitField,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } from "discord.js"
 
 dotenv.config()
@@ -29,6 +32,7 @@ const targetGuildId = process.env.SERVER_ID
 const targetChannelId = process.env.CHANNEL_ID
 const ticketCategoryId = process.env.CATEGORY_ID
 const adminChannelId = process.env.ADMIN_CHANNEL_ID
+const adminID = process.env.ADMIN_ID
 
 // Redis Helper Functions
 async function redisSet(key, value) {
@@ -89,6 +93,7 @@ client.on(Events.MessageCreate, async message => {
     if (match) {
       const discordID = match[1]
       const query = match[2]
+      const attachments = message.attachments
 
       try {
         const guild = await client.guilds.fetch(targetGuildId)
@@ -103,10 +108,17 @@ client.on(Events.MessageCreate, async message => {
             .catch(() => null) // Handle deleted channels
 
           if (ticketChannel) {
-            // If channel exists, send the query to it
-            await ticketChannel.send(
-              `New message from <@${existingChannel.userId}>:\n\n**Query:** ${query}`
-            )
+            // If channel exists, send the query and attachments to it
+            const msg = await ticketChannel.send({
+              content: `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${adminID}>`,
+            })
+            if (attachments.size > 0) {
+              for (const attachment of attachments.values()) {
+                await ticketChannel.send({
+                  files: [attachment.url],
+                })
+              }
+            }
             console.log(
               `Message sent to existing channel: ${ticketChannel.name}`
             )
@@ -129,6 +141,15 @@ client.on(Events.MessageCreate, async message => {
 
         if (!member) {
           console.log(`User with ID ${discordID} not found in the guild.`)
+          const adminChannel = await message.guild.channels
+            .fetch(adminChannelId)
+            .catch(() => null)
+
+          if (adminChannel) {
+            await adminChannel.send(
+              `⚠️ <@${adminID}> User with ID ${discordID} not found in the guild.`
+            )
+          }
           return
         }
 
@@ -169,9 +190,17 @@ client.on(Events.MessageCreate, async message => {
         })
 
         // Send the query to the newly created channel
-        await ticketChannel.send(
-          `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}`
-        )
+        const msg = await ticketChannel.send({
+          content: `Hello <@${member.user.id}>,\nyour query has been received:\n\n**Query:** ${query}\n\nOur support team will be with you shortly <@${adminID}>`,
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId("close-ticket")
+                .setLabel("Close Ticket")
+                .setStyle(ButtonStyle.Danger)
+            ),
+          ],
+        })
         console.log(`Created channel: ${ticketChannel.name}`)
       } catch (error) {
         console.error(`Failed to handle message: ${error.message}`)
@@ -182,9 +211,39 @@ client.on(Events.MessageCreate, async message => {
 
         if (adminChannel) {
           await adminChannel.send(
-            `⚠️ An error occurred while processing a ticket:\n**Error:** ${error.message}`
+            `⚠️ <@${adminID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
           )
         }
+      }
+    }
+  }
+})
+
+// Handle button interactions
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isButton()) return
+
+  if (interaction.customId === "close-ticket") {
+    try {
+      const channel = interaction.channel
+      const user = interaction.user
+
+      await redisGet(interaction.user.username)
+
+      await channel.delete("Ticket closed by user")
+      await redisDelete(interaction.user.username)
+      console.log(`Channel ${channel.name} deleted by user ${user.tag}`)
+    } catch (error) {
+      console.error(`Failed to handle message: ${error.message}`)
+
+      const adminChannel = await interaction.guild.channels
+        .fetch(adminChannelId)
+        .catch(() => null)
+
+      if (adminChannel) {
+        await adminChannel.send(
+          `⚠️ <@${adminID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
+        )
       }
     }
   }
