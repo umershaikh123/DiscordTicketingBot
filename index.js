@@ -7,6 +7,11 @@ import {
   PermissionsBitField,
   ActionRowBuilder,
   ButtonBuilder,
+  InteractionType,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputComponent,
+  TextInputStyle,
   ButtonStyle,
 } from "discord.js"
 
@@ -149,7 +154,7 @@ client.on(Events.MessageCreate, async message => {
 
           if (adminChannel) {
             await adminChannel.send(
-              `⚠️ <@${adminID}> User with ID ${discordID} not found in the guild.`
+              `⚠️ <@${supportID}> User with ID ${discordID} not found in the guild.`
             )
           }
           return
@@ -224,7 +229,7 @@ client.on(Events.MessageCreate, async message => {
 
         if (adminChannel) {
           await adminChannel.send(
-            `⚠️  An error occurred while processing a ticket:\n**Error:** ${error.message}`
+            `⚠️ <@${supportID}>  An error occurred while processing a ticket:\n**Error:** ${error.message}`
           )
         }
       }
@@ -236,30 +241,144 @@ client.on(Events.MessageCreate, async message => {
 client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isButton()) return
 
-  if (interaction.customId === "close-ticket") {
-    try {
-      const channel = interaction.channel
-      const user = interaction.user
+  try {
+    if (interaction.isButton() && interaction.customId === "close-ticket") {
+      const actionRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("cancel-close-ticket")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId("confirm-close-ticket-final")
+          .setLabel("Close Ticket")
+          .setStyle(ButtonStyle.Danger)
+      )
 
-      await redisGet(interaction.user.username)
+      await interaction.reply({
+        content: "Are you sure you want to close this ticket?",
+        components: [actionRow],
+      })
+      return
+    }
 
-      await channel.delete("Ticket closed by user")
-      await redisDelete(interaction.user.username)
-      console.log(`Channel ${channel.name} deleted by user ${user.tag}`)
-    } catch (error) {
-      console.error(`Failed to handle message: ${error.message}`)
+    // Handle button interactions from the confirmation message
+    console.log("interaction.customId", interaction.customId)
+    // Handle "Cancel" button
+    if (
+      interaction.isButton() &&
+      interaction.customId === "cancel-close-ticket"
+    ) {
+      await interaction.update({
+        content: "Ticket closure canceled.",
+        components: [], // Remove buttons
+      })
+      return
+    }
+    if (
+      interaction.isButton() &&
+      interaction.customId === "confirm-close-ticket-final"
+    ) {
+      try {
+        const channel = interaction.channel
+        const user = interaction.user
 
-      const adminChannel = await interaction.guild.channels
-        .fetch(ERROR_CHANNEL_ID)
-        .catch(() => null)
+        await redisGet(interaction.user.username)
 
-      if (adminChannel) {
-        await adminChannel.send(
-          `⚠️  An error occurred while processing a ticket:\n**Error:** ${error.message}`
-        )
+        await channel.delete("Ticket closed by user")
+        await redisDelete(interaction.user.username)
+        console.log(`Channel ${channel.name} deleted by user ${user.tag}`)
+      } catch (error) {
+        console.error(`Error closing ticket: ${error.message}`)
+        await interaction.reply({
+          content: "An error occurred while closing the ticket.",
+        })
       }
+      return
+    }
+  } catch (error) {
+    console.error(`Failed to handle button interaction: ${error.message}`)
+
+    const adminChannel = await interaction.guild.channels
+      .fetch(ERROR_CHANNEL_ID)
+      .catch(() => null)
+
+    if (adminChannel) {
+      await adminChannel.send(
+        `⚠️ <@${supportID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
+      )
     }
   }
 })
+
+// // Handle modal submissions
+// client.on(Events.InteractionCreate, async interaction => {
+//   if (!interaction.isModalSubmit()) return
+
+//   if (interaction.customId === "confirm-close-ticket") {
+//     try {
+//       const confirmation = interaction.fields
+//         .getTextInputValue("confirm-close")
+//         .trim()
+
+//       if (confirmation.toUpperCase() !== "CLOSE") {
+//         await interaction.reply({
+//           content: "Ticket closure canceled. Type 'CLOSE' exactly to confirm.",
+//           ephemeral: true,
+//         })
+//         return
+//       }
+
+//       const channel = interaction.channel
+//       const user = interaction.user
+
+//       // Delete channel and Redis entry
+//       await redisDelete(user.username)
+//       await channel.delete("Ticket closed by user")
+//       console.log(`Channel ${channel.name} deleted by user ${user.tag}`)
+//     } catch (error) {
+//       console.error(`Failed to handle modal submission: ${error.message}`)
+
+//       const adminChannel = await interaction.guild.channels
+//         .fetch(ERROR_CHANNEL_ID)
+//         .catch(() => null)
+
+//       if (adminChannel) {
+//         await adminChannel.send(
+//           `⚠️ <@${supportID}> An error occurred while processing a ticket:\n**Error:** ${error.message}`
+//         )
+//       }
+//     }
+//   }
+// })
+
+// Handle button interactions
+// client.on(Events.InteractionCreate, async interaction => {
+//   if (!interaction.isButton()) return
+
+//   if (interaction.customId === "close-ticket") {
+//     try {
+// const channel = interaction.channel
+// const user = interaction.user
+
+// await redisGet(interaction.user.username)
+
+// await channel.delete("Ticket closed by user")
+// await redisDelete(interaction.user.username)
+// console.log(`Channel ${channel.name} deleted by user ${user.tag}`)
+//     } catch (error) {
+//       console.error(`Failed to handle message: ${error.message}`)
+
+//       const adminChannel = await interaction.guild.channels
+//         .fetch(ERROR_CHANNEL_ID)
+//         .catch(() => null)
+
+//       if (adminChannel) {
+//         await adminChannel.send(
+//           `⚠️  An error occurred while processing a ticket:\n**Error:** ${error.message}`
+//         )
+//       }
+//     }
+//   }
+// })
 
 client.login(process.env.DISCORD_TOKEN)
